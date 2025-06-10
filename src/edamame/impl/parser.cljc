@@ -213,9 +213,13 @@
 (defn parse-comment
   [#?(:cljs ^not-native reader :default reader)]
   (let [ir? (r/indexing-reader? reader)
-        start-loc (when ir? (location reader))
-        comment-text (r/read-line reader)]
-    (->Comment comment-text start-loc)))
+        start-loc (when ir? (location reader))]
+    (loop [semicolon-count 0]
+      (if (= \; (r/peek-char reader))
+        (do
+          (r/read-char reader) ;; consume the semicolon
+          (recur (inc semicolon-count)))
+        (->Comment (r/read-line reader) start-loc)))))
 
 (defn skip-whitespace
   "Skips whitespace. Returns :none or :some depending on whitespace
