@@ -529,7 +529,9 @@
            (r/read-char reader) ;; ignore :
            (parse-namespaced-map ctx reader))
       \! (if (:comments ctx)
-           (parse-comment reader)
+           (do
+             (r/read-char reader)
+             (parse-comment reader))
            (do
              (parse-comment reader)
              reader))
@@ -729,7 +731,9 @@
                            (r/read-char reader)
                            expected-delimiter)))
           \; (if (:comments ctx)
-               (parse-comment reader)
+               (do
+                 (r/read-char reader)
+                 (parse-comment reader))
                (do
                  (parse-comment reader)
                  reader))
