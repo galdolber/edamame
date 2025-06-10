@@ -28,6 +28,10 @@
 (def expected-delimiter #?(:clj (Object.) :cljs (js/Object.)))
 #?(:cljs (def Exception js/Error))
 
+(defrecord Comment [text location])
+
+(defn comment? [obj] (instance? Comment obj))
+
 (defn throw-reader
   "Throw reader exception, including line line/column. line/column is
   read from the reader but it can be overriden by passing loc
@@ -208,8 +212,10 @@
 
 (defn parse-comment
   [#?(:cljs ^not-native reader :default reader)]
-  (r/read-line reader)
-  reader)
+  (let [ir? (r/indexing-reader? reader)
+        start-loc (when ir? (location reader))
+        comment-text (r/read-line reader)]
+    (->Comment comment-text start-loc)))
 
 (defn skip-whitespace
   "Skips whitespace. Returns :none or :some depending on whitespace
@@ -522,9 +528,11 @@
       \: (do
            (r/read-char reader) ;; ignore :
            (parse-namespaced-map ctx reader))
-      \! (do
+      \! (if (:comments ctx)
            (parse-comment reader)
-           reader)
+           (do
+             (parse-comment reader)
+             reader))
       \# (do
            (r/read-char reader)
            (read-symbolic-value reader nil nil))
@@ -720,7 +728,11 @@
                            ;; read delimiter
                            (r/read-char reader)
                            expected-delimiter)))
-          \; (parse-comment reader)
+          \; (if (:comments ctx)
+               (parse-comment reader)
+               (do
+                 (parse-comment reader)
+                 reader))
           \^ (do
                (r/read-char reader) ;; ignore ^
                (let [meta-val (parse-next ctx reader true)
@@ -767,56 +779,59 @@
            (recur ctx reader desugar)
            (if (identical? expected-delimiter obj)
              obj
-             (let [auto-resolve-ns (:auto-resolve-ns ctx)
-                   _ (when auto-resolve-ns
-                       (when-let [ns-parsed (when (and (seq? obj)
-                                                       (= 'ns (first obj)))
-                                              (try (ns-parser/parse-ns-form obj)
-                                                   (catch Exception _ nil)))]
-                         (when-let [ns-state (:ns-state ctx)]
-                           (reset! ns-state (assoc (:aliases ns-parsed) :current (:current ns-parsed))))))
-                   postprocess (:postprocess ctx)
-                   location? (:location? ctx)
-                   end-loc? (:end-location ctx)
-                   iobj?? (iobj? obj)
-                   src (when log?
-                         (.trim (subs (str buf) offset)))
-                   loc? (and ir? (or (and iobj??
-                                          (or (not location?)
-                                              (location? obj)))
-                                     postprocess))
-                   end-loc (when (and ir? loc? end-loc?)
-                             (location reader))
-                   row (when loc? (:row loc))
-                   end-row (when end-loc? (:row end-loc))
-                   col (when loc? (:col loc))
-                   end-col (when end-loc? (:col end-loc))
-                   postprocess-fn (when postprocess
-                                    #(postprocess
-                                      (cond->
-                                          {:obj %}
-                                        loc? (assoc :loc (cond-> {(:row-key ctx) row
-                                                                  (:col-key ctx) col}
-                                                           end-loc? (-> (assoc (:end-row-key ctx) end-row
-                                                                               (:end-col-key ctx) end-col))))
-                                        src (assoc (or (:source-key ctx)
-                                                       :source)
-                                                   src))))
-                   obj (if desugar
-                         (if postprocess-fn
-                           (desugar-meta obj postprocess-fn)
-                           (desugar-meta obj)) obj)
-                   obj (cond postprocess (postprocess-fn obj)
-                             loc? (vary-meta obj
-                                             #(cond->
-                                                  (-> %
-                                                      (assoc (:row-key ctx) row)
-                                                      (assoc (:col-key ctx) col))
-                                                end-loc? (-> (assoc (:end-row-key ctx) end-row)
-                                                             (assoc (:end-col-key ctx) end-col))
-                                                src (assoc (:source-key ctx) src)))
-                             :else obj)]
-               obj))))
+             (if (and (instance? Comment obj)
+                      (not (:comments ctx)))
+               (recur ctx reader desugar)
+               (let [auto-resolve-ns (:auto-resolve-ns ctx)
+                     _ (when auto-resolve-ns
+                         (when-let [ns-parsed (when (and (seq? obj)
+                                                         (= 'ns (first obj)))
+                                                (try (ns-parser/parse-ns-form obj)
+                                                     (catch Exception _ nil)))]
+                           (when-let [ns-state (:ns-state ctx)]
+                             (reset! ns-state (assoc (:aliases ns-parsed) :current (:current ns-parsed))))))
+                     postprocess (:postprocess ctx)
+                     location? (:location? ctx)
+                     end-loc? (:end-location ctx)
+                     iobj?? (iobj? obj)
+                     src (when log?
+                           (.trim (subs (str buf) offset)))
+                     loc? (and ir? (or (and iobj??
+                                            (or (not location?)
+                                                (location? obj)))
+                                       postprocess))
+                     end-loc (when (and ir? loc? end-loc?)
+                               (location reader))
+                     row (when loc? (:row loc))
+                     end-row (when end-loc? (:row end-loc))
+                     col (when loc? (:col loc))
+                     end-col (when end-loc? (:col end-loc))
+                     postprocess-fn (when postprocess
+                                      #(postprocess
+                                        (cond->
+                                            {:obj %}
+                                          loc? (assoc :loc (cond-> {(:row-key ctx) row
+                                                                    (:col-key ctx) col}
+                                                             end-loc? (-> (assoc (:end-row-key ctx) end-row
+                                                                                 (:end-col-key ctx) end-col))))
+                                          src (assoc (or (:source-key ctx)
+                                                         :source)
+                                                     src))))
+                     obj (if desugar
+                           (if postprocess-fn
+                             (desugar-meta obj postprocess-fn)
+                             (desugar-meta obj)) obj)
+                     obj (cond postprocess (postprocess-fn obj)
+                               loc? (vary-meta obj
+                                               #(cond->
+                                                    (-> %
+                                                        (assoc (:row-key ctx) row)
+                                                        (assoc (:col-key ctx) col))
+                                                  end-loc? (-> (assoc (:end-row-key ctx) end-row)
+                                                               (assoc (:end-col-key ctx) end-col))
+                                                  src (assoc (:source-key ctx) src)))
+                               :else obj)]
+                 obj)))))
        eof))))
 
 (defn string-reader
@@ -832,7 +847,7 @@
                     end-row-key end-col-key
                     source source-key
                     postprocess location?
-                    end-location
+                    end-location comments
                     ns-state])
 
 (defn normalize-opts [opts]
@@ -867,7 +882,8 @@
                        :read-eval true
                        :regex true
                        :syntax-quote true
-                       :var true} opts)
+                       :var true
+                       :comments false} opts)
                opts)
         opts (cond-> opts
                (not (:row-key opts)) (assoc :row-key :row)
