@@ -733,9 +733,10 @@
           \^ (do
                (r/read-char reader) ;; ignore ^
                (let [meta-val (parse-next ctx reader true)
-                     val-val (vary-meta (parse-next ctx reader)
-                                        merge meta-val)]
-                 val-val))
+                     obj (parse-next ctx reader)]
+                 (if-let [custom-metadata (:metadata ctx)]
+                   (custom-metadata obj meta-val)
+                   (vary-meta obj merge meta-val))))
           \: (parse-keyword ctx reader)
           \" (parse-string* ctx reader)
           \\ (read-char* reader (r/read-char reader) nil)
